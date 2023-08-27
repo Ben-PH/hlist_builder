@@ -1,0 +1,15 @@
+[package]
+name = "hl_construct"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+frunk = "0.4.2"
+hl_build_macro = { path = "./hl_build_macro/"}
+
+[dev-dependencies]
+proc-macro2 = "1.0.66"
+quote = "1.0.33"
+syn = "2.0.29"
