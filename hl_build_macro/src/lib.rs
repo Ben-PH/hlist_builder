@@ -2,7 +2,7 @@ extern crate proc_macro;
 
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, DeriveInput};
+use syn::{parse_macro_input, DeriveInput, Type};
 
 
 #[proc_macro_attribute]
@@ -68,6 +68,11 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     expanded.into()
 }
+
+// fn gen_where_clause(depth: u8, types: Vec<Type>) -> String {
+//     format!("{}L{}: Plucker<{}, {}>", std::iter::repeat('<').take(depth).collect::<String>(), depth, types[depth])
+// }
+
 
 fn gen_setter(field_ident: &syn::Ident, field_type: &syn::Type, builder_ident: &syn::Ident) -> proc_macro2::TokenStream {
     // set the ident
