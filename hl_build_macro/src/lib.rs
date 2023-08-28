@@ -2,15 +2,12 @@ extern crate proc_macro;
 use proc_macro::TokenStream;
 use quote::{quote, ToTokens};
 use syn::{
-    parse_macro_input, Block, DeriveInput, FnArg, Generics, Pat, PatIdent, PatType, Type, TypeParam, punctuated::Punctuated,
+    parse_macro_input, Block, DeriveInput, FnArg, Generics, Pat, PatIdent, PatType, Type, TypeParam, punctuated::Punctuated, GenericParam, token::Comma,
 };
 
-#[proc_macro_attribute]
-pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let mut input = parse_macro_input!(item as DeriveInput);
-
-    let mut annotated_fields: Vec<(syn::Ident, syn::Type)> = Vec::new();
-    let mut non_annotated_fields: Vec<(syn::Ident, syn::Type)> = Vec::new();
+fn parse_fields(mut input: DeriveInput) -> (DeriveInput, Vec<(syn::Ident, syn::Type)>, Vec<(syn::Ident, syn::Type)>) {
+    let mut annotated_fields = Vec::new();
+    let mut non_annotated_fields = Vec::new();
 
     if let syn::Data::Struct(syn::DataStruct {
         fields: syn::Fields::Named(named),
@@ -35,46 +32,62 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
             }
         }
     }
+    (input, annotated_fields, non_annotated_fields)
+}
 
-    let args = non_annotated_fields
-        .iter()
+fn make_args(fields: Vec<(syn::Ident, syn::Type)>) -> impl Iterator<Item = FnArg> {
+    let args = fields
+        .into_iter()
         .map(|(ident, ty)| {
             let pat_id = PatIdent {
                 attrs: vec![],
                 by_ref: None,
                 mutability: None,
-                ident: ident.clone(),
+                ident,
                 subpat: None,
             };
             let pat_tp = PatType {
                 attrs: vec![],
                 pat: Box::new(Pat::Ident(pat_id)),
                 colon_token: Default::default(),
-                ty: Box::new(ty.clone()),
+                ty: Box::new(ty),
             };
             FnArg::Typed(pat_tp)
-        })
-        .collect::<Vec<_>>();
+        });
 
-    let gens: String = annotated_fields
+    let fn_arg: syn::FnArg = syn::parse_str("l0: L0").unwrap();
+    let args = std::iter::once(fn_arg).chain(args);
+    args
+    
+}
+fn make_generic_params(fields: Vec<(syn::Ident, syn::Type)>) -> Punctuated<GenericParam, Comma> {
+
+    let gens: String = fields
         .iter()
         .enumerate()
         .map(|(i, _)| format!("L{}", i))
         .collect::<Vec<String>>()
         .join(", ");
     let gens = format!("<{}>", gens);
-    let parsed_gens: syn::Generics = syn::parse_str(&gens).unwrap();
+    syn::parse_str::<Generics>(&gens).unwrap().params
+}
+#[proc_macro_attribute]
+pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as DeriveInput);
+
+    let (input, annotated_fields, non_annotated_fields) = parse_fields(input);
+    let args = make_args(non_annotated_fields);
+
+
     let where_clause: syn::WhereClause = syn::parse_str("where Foo: Bar").unwrap();
     let fn_ident = syn::Ident::new("hl_new", proc_macro2::Span::call_site());
     let output: syn::ReturnType = syn::parse_str("-> (Self, Fizz)").unwrap();
-    let fn_arg: syn::FnArg = syn::parse_str("l0: L0").unwrap();
-    let args = std::iter::once(fn_arg).chain(args);
 
     let sig = syn::Signature {
         ident: fn_ident,
         generics: Generics {
             where_clause: Some(where_clause),
-            params: parsed_gens.params,
+            params: make_generic_params(annotated_fields),
             ..Default::default()
         },
         inputs: Punctuated::from_iter(args.into_iter()),
