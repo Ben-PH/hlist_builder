@@ -1,6 +1,6 @@
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse::Parser, Block, Ident, Stmt};
+use syn::{Block, Ident, Stmt};
 
 fn main() {
     let types = vec!["u8", "bool"]; // , "f32", "Foo", "Bar", "Baz"];
