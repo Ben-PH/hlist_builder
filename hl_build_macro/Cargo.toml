@@ -13,4 +13,4 @@ frunk = "0.4.2"
 
 proc-macro2 = "1.0.66"
 quote = "1.0.33"
-syn = "2.0.29"
+syn = {version = "2.0.29", features=["full"]}
