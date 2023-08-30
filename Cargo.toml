@@ -8,6 +8,9 @@ edition = "2021"
 [dependencies]
 frunk = "0.4.2"
 hl_build_macro = { path = "./hl_build_macro/"}
+proc-macro2 = "1.0.66"
+syn = {version = "2.0.29", features=["full"]}
+quote = "1.0.33"
 
 [dev-dependencies]
 proc-macro2 = "1.0.66"

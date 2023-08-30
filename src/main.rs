@@ -1,17 +1,21 @@
+use hl_construct::demo_use;
 use proc_macro2::Span;
 use quote::quote;
 use syn::{Block, Ident, Stmt};
 
+
 fn main() {
-    let types = vec!["u8", "bool"]; // , "f32", "Foo", "Bar", "Baz"];
-    let mut wheres = (0..types.len())
-        .map(|i| gen_where_line(("".to_string(), 0), &types[0..=i]))
-        .collect::<Vec<_>>();
-    wheres.push(next_type(
-        &mut (wheres.last().unwrap().clone(), types.len() as u8 + 1),
-        None,
-    ));
-    dbg!(wheres);
+    demo_use();
+    // let types = vec!["u8", "bool"]; // , "f32", "Foo", "Bar", "Baz"];
+    // let mut wheres = (0..types.len())
+    //     .map(|i| gen_where_line(("".to_string(), 0), &types[0..=i]))
+    //     .collect::<Vec<_>>();
+    // wheres.push(next_type(
+    //     &mut (wheres.last().unwrap().clone(), types.len() as u8 + 1),
+    //     None,
+    // ));
+
+    // dbg!(wheres);
 }
 
 fn gen_where_line(mut acc: (String, u8), types: &[&'static str]) -> String {
@@ -25,21 +29,21 @@ fn gen_where_line(mut acc: (String, u8), types: &[&'static str]) -> String {
 
 fn next_type(curr: &mut (String, u8), next: Option<&'static str>) -> String {
     // not the start: bump it over
-    if curr.0.contains(": Plucker") {
+    if curr.0.contains(": frunk_core::hlist::Plucker") {
         let constraint = next.map_or("".to_string(), |next| {
-            format!(": Plucker<{}, L{}>", next.clone(), curr.1 + 1)
+            format!(": frunk_core::hlist::Plucker<{}, L{}>", next.clone(), curr.1 + 1)
         });
         return format!(
             "<{}>::Remainder{}",
             // treat this list as what's left after a pluck
-            curr.0.replace(": Plucker", " as Plucker"),
+            curr.0.replace(": frunk_core::hlist::Plucker", " as Plucker"),
             // make sure what's left after the pluck can pluck the next type
             constraint,
         );
     }
 
     // start, so load the first type
-    format!("L0: Plucker<{}, L1>", next.unwrap())
+    format!("L0: frunk_core::hlist::Plucker<{}, L1>", next.unwrap())
 }
 fn gen_stmts(fields: Vec<Ident>, args: Vec<Ident>) -> Block {
     let mut list_n = 0;

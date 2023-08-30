@@ -4,7 +4,7 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, Block, DeriveInput, FnArg,
-    GenericParam, Generics, Ident, Pat, PatIdent, PatType, Stmt, Type, WherePredicate,
+    GenericParam, Generics, Ident, Pat, PatIdent, PatType, Stmt, Type, WherePredicate, TypeParamBound, PathSegment, Path, GenericArgument, TraitBoundModifier, TraitBound,
 };
 
 #[proc_macro_attribute]
@@ -28,31 +28,47 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = make_args(non_annotated_fields);
 
     // constrain each resulting list to implement the next plucking
-    let wheres = (0..annotated_fields.len())
-        .map(|i| gen_where_line(("".to_string(), 0), &annotated_fields[0..=i]))
-        .collect::<Vec<_>>();
-    let where_preds = wheres
-        .iter()
-        .map(|s| syn::parse_str::<WherePredicate>(s).unwrap())
-        .collect::<Vec<_>>();
+    let types = annotated_fields.iter().cloned().map(|f| f.1);
+            dbg!(quote!{#(#types)*});
+    let wheres: Vec<WherePredicate> = (0..annotated_fields.len())
+        .fold(Vec::new(), |mut acc, i| {
+            let curr_pred = acc.last().map(|last| last.clone());
+            
+            if let Some(new_pred) = gen_where_predicate_entry(curr_pred, 0, &annotated_fields[0..=i]) {
+                acc.push(new_pred);
+            }
+            acc
+        });
 
-    // like an extra where predicate, but without the constraint.
-    let last = where_preds.last().unwrap();
-    let ret = next_type(
-        &mut (quote! {#last}.to_string(), annotated_fields.len() as u8 + 1),
-        None,
-    );
+    dbg!(annotated_fields.len());
+    let ret_type = absorb_param_bound(wheres.last().cloned().expect("last wheres")).expect("top-lvl absorb");
 
-    // put the where predicaties into a quotable form
-    let where_clause = syn::WhereClause {
-        where_token: syn::token::Where {
-            span: Span::call_site(),
-        },
-        predicates: Punctuated::from_iter(where_preds),
-    };
     let fn_ident = syn::Ident::new("hl_new", proc_macro2::Span::call_site());
-    let output: syn::ReturnType = syn::parse_str(format!("-> (Self, {})", ret).as_str()).unwrap();
-
+    let output: syn::ReturnType = syn::ReturnType::Type(
+        syn::token::RArrow::default(),
+        Box::new(syn::Type::Tuple(syn::TypeTuple {
+            paren_token: syn::token::Paren::default(),
+            elems: {
+                let mut punctuated = Punctuated::new();
+                punctuated.push(syn::Type::Path(syn::TypePath {
+                    qself: None,
+                    path: syn::parse_str("Self").expect("parseing Self"),
+                }));
+                punctuated.push(ret_type);
+                punctuated
+            },
+        })),
+    );
+    let where_clause = {
+        let mut wc = syn::WhereClause {
+            where_token: Default::default(),
+            predicates: Punctuated::new(),
+        };
+        for where_predicate in wheres.iter() {
+            wc.predicates.push(where_predicate.clone());
+        }
+        wc
+    };
     // tie all the signature details together
     let sig = syn::Signature {
         ident: fn_ident,
@@ -111,7 +127,7 @@ fn parse_fields(
                 .iter()
                 .any(|attr| attr.path().is_ident("hl_field"));
 
-            let field_ident = field.ident.clone().unwrap(); // Assuming named fields
+            let field_ident = field.ident.clone().expect("field ident"); // Assuming named fields
             let field_type = field.ty.clone(); // Type
 
             if is_annotated {
@@ -126,6 +142,13 @@ fn parse_fields(
     (input, annotated_fields, non_annotated_fields)
 }
 
+/// ```
+/// #[hl_build]
+/// struct Foo {
+///   [hl_field]
+///   foo: u8,
+/// }
+/// // -> `foo: u8` to pass into a function argument
 fn make_args(fields: Vec<(syn::Ident, syn::Type)>) -> impl Iterator<Item = FnArg> {
     let args = fields.into_iter().map(|(ident, ty)| {
         let pat_id = PatIdent {
@@ -144,9 +167,11 @@ fn make_args(fields: Vec<(syn::Ident, syn::Type)>) -> impl Iterator<Item = FnArg
         FnArg::Typed(pat_tp)
     });
 
-    let fn_arg: syn::FnArg = syn::parse_str("l0: L0").unwrap();
+    let fn_arg: syn::FnArg = syn::parse_str("l0: L0").expect("parsing fn arg");
     std::iter::once(fn_arg).chain(args)
 }
+
+// `<L0, L1, ..., L(N-1)>` for the `fn hl_new<L1, ...>`
 fn make_generic_params(count: usize) -> Punctuated<GenericParam, Comma> {
     let gens: String = (0..count + 1)
         .map(|i| format!("L{}", i))
@@ -154,44 +179,155 @@ fn make_generic_params(count: usize) -> Punctuated<GenericParam, Comma> {
         .join(", ");
     let gens = format!("<{}>", gens);
     println!("==================\n{}\n===================", gens);
-    syn::parse_str::<Generics>(&gens).unwrap().params
+    syn::parse_str::<Generics>(&gens).expect("parsing the make_generic_params").params
 }
 
 
-fn gen_where_line(mut acc: (String, u8), types: &[(Ident, Type)]) -> String {
+fn gen_where_predicate_entry(curr_pred: WherePredicate, curr_l: u8, types: &[(Ident, Type)]) -> Result<WherePredicate, ()> {
     if types.is_empty() {
-        return acc.0;
+        return Err(());
     }
+    let top = base_where_pred(&types[0].1);
+    Ok(gen_where_predicate_recurse(1, types[1..]))
 
-    let next = next_type(&mut acc, Some(&types[0].1));
-    gen_where_line((next, acc.1 + 1), &types[1..])
+
+    // get the needed impl
+    let implements = next_type(curr_pred.clone(), curr_l, Some(&types[0].1));
+    // make the <curr as plucker>::Remainder
+    let absorbed_pred = absorb_param_bound(curr_pred.clone().unwrap());
+    Ok(gen_where_predicate_entry(curr_pred, curr_l + 1, &types[1..]))
+}
+fn gen_where_predicate_recurse(curr_pred: WherePredicate, curr_l: u8, types: &[(Ident, Type)]) -> Result<WherePredicate, ()> {
+    let new_type: syn::Type = absorb_param_bound(curr_pred);
+    let new_plucker: TypeParamBound = gen_plucker(&types[0].1, curr_l);
+    let pred_res = syn::PredicateType {
+        lifetimes: None,
+        bounded_ty: new_type,
+        colon_token: syn::token::Colon { spans: [Span::call_site()] },
+        bounds: {
+            let mut punctuated = Punctuated::new();
+            punctuated.push(new_plucker);
+            punctuated
+        },
+    };
+    if types.len() == 1  {
+        Ok(pred_res)
+    } else {
+        gen_where_predicate_recurse(pred_res, curr_l + 1, types[1..]);
 }
 
-fn next_type(curr: &mut (String, u8), next: Option<&Type>) -> String {
-    // not the start: bump it over
-    if curr.0.contains(": Plucker") {
-        let constraint = next.map_or("".to_string(), |next| {
-            let next = next.clone();
-            format!(
-                ": Plucker<{}, L{}>",
-                quote! { #next }.to_string(),
-                curr.1 + 1
-            )
-        });
-        return format!(
-            "<{}>::Remainder{}",
-            // treat this list as what's left after a pluck
-            curr.0.replace(": Plucker", " as Plucker"),
-            // make sure what's left after the pluck can pluck the next type
-            constraint,
+
+fn next_type(curr_pred: Option<WherePredicate>, curr_ln: u8, next: Option<&Type>) -> (Type, Option<TypeParamBound>) {
+    // base-case. generate the opening where-clause
+    let Some(curr_pred) = curr_pred else {
+        return base_where_pred(next.expect("return of next-type"));
+    };
+
+
+    let tp_param_bound = next.map(|tp| gen_plucker(tp, curr_ln + 1));
+    let absorbed_pred = absorb_param_bound(curr_pred).expect("next-types absorb-param-pound call");
+
+    (absorbed_pred, tp_param_bound)
+}
+
+// Foo: Bar -> <Foo as Bar>::Remainder
+fn absorb_param_bound(current: WherePredicate) -> Type {
+    let WherePredicate::Type(syn::PredicateType { bounded_ty, .. }) = &current else {
+        return None;
+    };
+     let remainder = PathSegment {
+            ident: syn::Ident::new("Remainder", proc_macro2::Span::call_site()),
+            arguments: syn::PathArguments::None,
+        };
+        
+        // Create path for `as CurrentBound`
+        let as_current_bound = Path {
+            leading_colon: None,
+            segments: vec![remainder].into_iter().collect(),
+        };
+        
+        // Construct the new type path `<CurrentType as CurrentBound>::Remainder`
+        let new_type = Type::Path(
+            syn::TypePath {
+                qself: Some(syn::QSelf {
+                    lt_token: syn::token::Lt([proc_macro2::Span::call_site()]),
+                    ty: Box::new(bounded_ty.clone()),
+                    position: 1,
+                    as_token: Some(syn::token::As::default()),
+                    gt_token: syn::token::Gt([proc_macro2::Span::call_site()]),
+                }),
+                path: as_current_bound,
+            }
         );
+        
+        Some(new_type)
+}
+// `frunk_core::hlist::Plucker<next, Lnext_ln>`
+fn gen_plucker(next: &Type, next_ln: u8) -> TypeParamBound {
+    let trait_path = Path {
+        leading_colon: None,
+        segments: vec![
+            Ident::new("frunk_core", Span::call_site()),
+            Ident::new("hlist", Span::call_site()),
+            Ident::new("Plucker", Span::call_site()),
+        ].into_iter().map(|ident| PathSegment {
+            ident,
+            arguments: Default::default(),
+        }).collect(),
+    };
+
+    let next_generic_argument = GenericArgument::Type(next.clone());
+
+    let l_generic_argument = GenericArgument::Type(Type::Path(syn::TypePath {
+        qself: None,
+        path: Path {
+            leading_colon: None,
+            segments: vec![
+                PathSegment {
+                    ident: Ident::new(&format!("L{}", next_ln), Span::call_site()),
+                    arguments: Default::default(),
+                },
+            ].into_iter().collect(),
+        },
+    }));
+
+    let mut tb = TypeParamBound::Trait(syn::TraitBound {
+        path: trait_path,
+        modifier: syn::TraitBoundModifier::None,
+        paren_token: None,
+        lifetimes: None,
+    });
+
+    if let TypeParamBound::Trait(ref mut trait_bound) = tb {
+        trait_bound.path.segments.last_mut().expect("bad last-mut").arguments = syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+            args: vec![next_generic_argument, l_generic_argument].into_iter().collect(),
+            colon2_token: None,  // Optional and not needed here
+            lt_token: syn::Token![<](Span::call_site()),
+            gt_token: syn::Token![>](Span::call_site()),
+        });
     }
 
-    // start, so load the first type
-    let next = next.unwrap();
-    format!("L0: Plucker<{}, L1>", quote! { #next })
+    tb
 }
+fn base_where_pred(tp: &Type) -> (Type, Option<TypeParamBound>) {
+    // Create the type (i.e., `L0`)
+    let bounded_ty = Type::Path(syn::TypePath {
+        qself: None,
+        path: Path {
+            leading_colon: None,
+            segments: vec![
+                PathSegment {
+                    ident: Ident::new("L0", Span::call_site()),
+                    arguments: Default::default(),
+                },
+            ].into_iter().collect(),
+        },
+    });
 
+    let trait_bound_with_generics = gen_plucker(tp, 1);
+
+    (bounded_ty, Some(trait_bound_with_generics))
+}
 fn gen_stmts(fields: &Vec<Ident>, args: &[Ident]) -> Block {
     let mut list_n = 0;
     let mut stmts: Vec<Stmt> = vec![];
@@ -203,7 +339,7 @@ fn gen_stmts(fields: &Vec<Ident>, args: &[Ident]) -> Block {
         let stmt: Stmt = syn::parse2(quote! {
             let (#id, #next_list) = #list_n_tok.pluck();
         })
-        .unwrap();
+        .expect("");
         stmts.push(stmt);
         list_n += 1;
     }
@@ -214,7 +350,7 @@ fn gen_stmts(fields: &Vec<Ident>, args: &[Ident]) -> Block {
     let self_stmt: Stmt = syn::parse2(quote! {
         return (Self { #(#all_fields,)* }, #list_n_ident);
     })
-    .unwrap();
+    .expect("");
     stmts.push(self_stmt);
 
     Block {
