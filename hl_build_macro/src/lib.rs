@@ -67,26 +67,30 @@ impl std::fmt::Debug for WhereLine {
     }
 }
 impl WhereLine {
-    fn gen_lines_top(head: syn::Type, tail: &[syn::Type]) -> Vec<Self> {
-        let base = Self::gen_base(head);
-        if tail.len() == 1 {
+    fn gen_lines_top(types: &[syn::Type]) -> Vec<Self> {
+        if types.len() == 0 {
+            panic!("no pluckings happening");
+        }
+        let base = Self::gen_base(&types[0]);
+        if types.len() == 1 {
             return vec![base];
         }
-        Self::gen_lines_recur(vec![base],  tail[0].clone(), &tail[1..])
+        Self::gen_lines_recur(vec![base],  &types[1..])
     }
 
-    fn gen_lines_recur(mut acc: Vec<Self>, head: syn::Type, tail: &[syn::Type]) -> Vec<Self> {
+    fn gen_lines_recur(mut acc: Vec<Self>, types: &[syn::Type]) -> Vec<Self> {
         // use the previous predicate to make the new type
         let tp = acc.last().cloned().expect("should never recurse without the base...").absorb();
-        let pred = PluckParam::from((head, acc.len() as u8));
+
+        let pred = PluckParam::from((types[0].clone(), acc.len() as u8 + 1));
         acc.push(Self{tp, pred});
-        if tail.len() == 0 {
+        if types.len() == 1 {
             return acc;
         }
-        Self::gen_lines_recur(acc, tail[0].clone(), &tail[1..])
+        Self::gen_lines_recur(acc,  &types[1..])
     }
     /// L0: Plucker<tp, L1>
-    fn gen_base(tp: syn::Type) -> Self {
+    fn gen_base(tp: &syn::Type) -> Self {
          // Create an ident for "Plucker"
         let pred_ident = Ident::new("Plucker", Span::call_site());
 
@@ -290,8 +294,10 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
     }
     let types = annotated_fields.iter().map(|ArgPair{ tp, .. }| tp.clone()).collect::<Vec<_>>();
 
-    let lines = WhereLine::gen_lines_top(types[0].clone(), &types[1..]);
+    // make all where-clauses
+    let lines: Vec<WhereLine> = WhereLine::gen_lines_top(&types[..]);
 
+    // Take the last clause and absorb that to make the ret-val
     let ret = WhereLine::absorb(lines.last().expect("last line").clone());
 
 
