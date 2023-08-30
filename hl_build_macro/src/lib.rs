@@ -22,7 +22,7 @@ impl ArgPair {
     /// }
     /// // -> `foo: u8` to pass into a function argument
     fn make_args(fields: Vec<ArgPair>) -> impl Iterator<Item = FnArg> {
-        fields.into_iter().map(FnArg::from)
+       std::iter::once(syn::parse2(quote!{l0: L0}).unwrap()).chain(fields.into_iter().map(FnArg::from))
     }
 }
 impl From<(syn::Ident, syn::Type)> for ArgPair {
@@ -91,80 +91,10 @@ impl WhereLine {
     }
     /// L0: Plucker<tp, L1>
     fn gen_base(tp: &syn::Type) -> Self {
-         // Create an ident for "Plucker"
-        let pred_ident = Ident::new("Plucker", Span::call_site());
-
-        // Create an ident for "L0"
-        let l0_ident = Ident::new("L0", Span::call_site());
-
-        // Create an ident for "L1"
-        let l1_ident = Ident::new("L1", Span::call_site());
-
-        // Create the predicate PathArguments `Predicate<tp, L1>`
-        let pred_args = syn::PathArguments::AngleBracketed(
-            syn::AngleBracketedGenericArguments {
-                colon2_token: None,
-                lt_token: syn::Token![<](Span::call_site()),
-                args: {
-                    let mut args = syn::punctuated::Punctuated::new();
-                    args.push_value(syn::GenericArgument::Type(tp.clone()));
-                    args.push_punct(syn::Token![,](Span::call_site()));
-                    args.push_value(syn::GenericArgument::Type(Type::Path(
-                        syn::TypePath {
-                            qself: None,
-                            path: Path {
-                                leading_colon: None,
-                                segments: {
-                                    let mut segments = syn::punctuated::Punctuated::new();
-                                    segments.push_value(PathSegment {
-                                        ident: l1_ident,
-                                        arguments: syn::PathArguments::None,
-                                    });
-                                    segments
-                                },
-                            },
-                        },
-                    )));
-                    args
-                },
-                gt_token: syn::Token![>](Span::call_site()),
-            },
-        );
-
-        // Create the predicate as a TypeParamBound::Trait
-        let pred = TypeParamBound::Trait(syn::TraitBound {
-            paren_token: None,
-            modifier: syn::TraitBoundModifier::None,
-            lifetimes: None,
-            path: Path {
-                leading_colon: None,
-                segments: {
-                    let mut segments = syn::punctuated::Punctuated::new();
-                    segments.push_value(PathSegment {
-                        ident: pred_ident,
-                        arguments: pred_args,
-                    });
-                    segments
-                },
-            },
-        });
-
+        let pred = syn::parse2( quote!{Plucker<#tp, L1>} ).expect("quote the base plucker");
         // Create the WhereLine
         WhereLine {
-            tp: Type::Path(syn::TypePath {
-                qself: None,
-                path: Path {
-                    leading_colon: None,
-                    segments: {
-                        let mut segments = syn::punctuated::Punctuated::new();
-                        segments.push_value(PathSegment {
-                            ident: l0_ident,
-                            arguments: syn::PathArguments::None,
-                        });
-                        segments
-                    },
-                },
-            }),
+            tp: syn::parse2( quote!{L0} ).expect("quote the L0"),
             pred: PluckParam(pred),
         }
     }
@@ -278,13 +208,13 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // let (list_fieldn, ln+1) = ln.pluck();
     // ...also set the non-list built fields (from fn args)
-    //let block = gen_stmts(
-    //    &annotated_fields.iter().map(|(id, _)| id.clone()).collect(),
-    //    &non_annotated_fields
-    //        .iter()
-    //        .map(|(id, _)| id.clone())
-    //        .collect::<Vec<_>>()[..],
-    //);
+    let block = gen_stmts(
+        &annotated_fields.iter().map(|ArgPair{ident, ..}| ident.clone()).collect(),
+        &non_annotated_fields
+            .iter()
+            .map(|ArgPair{ident, ..}| ident.clone())
+            .collect::<Vec<_>>()[..],
+    );
 
     // hl_new args include the injected list, and values for the non-list built args
     let args = ArgPair::make_args(non_annotated_fields);
@@ -338,12 +268,11 @@ pub fn hl_build(_attr: TokenStream, item: TokenStream) -> TokenStream {
         paren_token: Default::default(),
     };
     let struct_ident = input.clone().ident;
-    let block = Box::new(quote!{todo!()});
     let fun = syn::ItemFn {
         attrs: vec![],
         vis: syn::Visibility::Inherited,
         sig,
-        block: Box::new(syn::parse2(quote!{{}}).expect("making the empty box")),
+        block: Box::new(block),
     };
 
     // et, voile! en a des code magnifique!
