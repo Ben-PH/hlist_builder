@@ -76,7 +76,7 @@ impl WhereLine {
     /// the new trait-impl requirement.
     ///
     /// ```ignore
-    ///  LN:   Plucker<TN, LN+1> // becomes...
+    ///  LN:   Plucker<TN, LN+1> // is saved, the next being...
     /// <LN as PLucker<TN, LN+1>>::Remainder: Plucker<TN+1, LN+2>
     /// ```
     fn gen_lines_recur(mut acc: Vec<Self>, types: &[syn::Type]) -> Vec<Self> {
@@ -158,8 +158,7 @@ pub fn hl_build(item: TokenStream) -> TokenStream {
     // get the fields: the list-built fields, and the manually-built fields
     let (input, annotated_fields, non_annotated_fields) = parse_fields(input);
 
-    // let (list_fieldn, ln+1) = ln.pluck();
-    // ...also set the non-list built fields (from fn args)
+    
     let block = gen_stmts(
         &annotated_fields.iter().map(|ArgPair{ident, ..}| ident.clone()).collect(),
         &non_annotated_fields
@@ -234,6 +233,9 @@ pub fn hl_build(item: TokenStream) -> TokenStream {
         }
     }.into()
 }
+
+/// collects the field name/type pairs, splitting them according to fields being built by the list
+/// or as args passed into the constructor
 fn parse_fields(
     mut input: DeriveInput,
 ) -> (
@@ -283,6 +285,12 @@ fn make_generic_params(count: usize) -> Punctuated<GenericParam, Comma> {
 }
 
 
+// generates a line of code for each field that needs a value plucked out of the constructor list. 
+// ```ignore
+// let (list_built0, l1) = frunk::hlist::Plucker::pluck(l0);
+// ```
+// ...and for the fileds ignored, just moves from the function argument to the rusulting structs
+// field
 fn gen_stmts(fields: &Vec<Ident>, args: &[Ident]) -> Block {
     let mut list_n = 0;
     let mut stmts: Vec<Stmt> = vec![];
