@@ -4,7 +4,7 @@ use proc_macro2::Span;
 use quote::quote;
 use syn::{
     parse_macro_input, punctuated::Punctuated, token::Comma, Block, DeriveInput, FnArg,
-    GenericParam, Generics, Ident, Pat, PatIdent, PatType, Stmt, Type, WherePredicate, TypeParamBound, PathSegment, Path, GenericArgument, TraitBoundModifier, TraitBound,
+    GenericParam, Generics, Ident, Stmt, Type, WherePredicate, TypeParamBound, PathSegment, Path
 };
 
 
@@ -328,7 +328,6 @@ fn make_generic_params(count: usize) -> Punctuated<GenericParam, Comma> {
         .collect::<Vec<String>>()
         .join(", ");
     let gens = format!("<{}>", gens);
-    println!("==================\n{}\n===================", gens);
     syn::parse_str::<Generics>(&gens).expect("parsing the make_generic_params").params
 }
 
